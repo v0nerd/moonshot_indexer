@@ -283,8 +283,12 @@ mod tests {
         let erc20_abi = get_erc20_abi();
 
         // Check that we have the expected events/functions
-        assert!(factory_abi.events().any(|(name, _)| name == "PoolCreated"));
-        assert!(pool_abi.events().any(|(name, _)| name == "Swap"));
-        assert!(erc20_abi.functions().any(|(name, _)| name == "symbol"));
+        assert!(factory_abi
+            .events()
+            .any(|event| event.name == "PoolCreated"));
+        assert!(pool_abi.events().any(|event| event.name == "Swap"));
+        assert!(erc20_abi
+            .functions()
+            .any(|function| function.name == "symbol"));
     }
 }

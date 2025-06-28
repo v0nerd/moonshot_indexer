@@ -59,8 +59,8 @@ fn test_swap_event_creation_and_validation() {
     assert!(event.tx_hash.len() == 66); // 0x + 64 hex chars
     assert!(event.token_in.len() == 42); // 0x + 40 hex chars
     assert!(event.token_out.len() == 42); // 0x + 40 hex chars
-    assert!(event.amount_in > 0.0);
-    assert!(event.amount_out > 0.0);
+    assert!(event.amount_in > 0);
+    assert!(event.amount_out > 0);
     assert!(event.timestamp > 0);
 }
 
@@ -209,11 +209,14 @@ async fn test_abi_parsing() {
     let erc20_abi = get_erc20_abi();
 
     // Check that we have the expected events/functions
-    assert!(factory_abi.events().any(|(name, _)| name == "PoolCreated"));
-    assert!(pool_abi.events().any(|(name, _)| name == "Swap"));
-    assert!(erc20_abi.functions().any(|(name, _)| name == "symbol"));
-    assert!(erc20_abi.functions().any(|(name, _)| name == "decimals"));
-}
+    assert!(factory_abi
+        .events()
+        .any(|event| event.name == "PoolCreated"));
+    assert!(pool_abi.events().any(|event| event.name == "Swap"));
+    assert!(erc20_abi
+        .functions()
+        .any(|function| function.name == "symbol"));
+    assert!(erc20_abi.functions().any(|func| func.name == "decimals"));
 
 #[tokio::test]
 async fn test_extensibility_pattern() {

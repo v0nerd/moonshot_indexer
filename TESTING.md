@@ -147,8 +147,8 @@ proptest! {
             timestamp: 1640995200,
         };
         
-        prop_assert!(event.amount_in >= 0.0);
-        prop_assert!(event.amount_out >= 0.0);
+        prop_assert!(event.amount_in >= 0);
+        prop_assert!(event.amount_out >= 0);
         prop_assert!(event.amount_out <= event.amount_in);
     }
 }
