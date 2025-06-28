@@ -1,7 +1,7 @@
 use moonshot_indexer::{
     config::Config,
-    types::{PoolData, SwapEvent},
     moonshot::MoonshotHandler,
+    types::{PoolData, SwapEvent},
 };
 use sqlx::postgres::PgPoolOptions;
 use std::env;
@@ -9,26 +9,26 @@ use std::env;
 #[tokio::test]
 async fn test_database_connection() {
     dotenv::dotenv().ok();
-    
+
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    
+
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(&db_url)
         .await;
-    
+
     assert!(pool.is_ok(), "Should be able to connect to database");
 }
 
 #[tokio::test]
 async fn test_rpc_connection() {
     dotenv::dotenv().ok();
-    
+
     let rpc_url = env::var("RPC_URL").expect("RPC_URL must be set");
-    
+
     // Test WebSocket connection
     let provider = ethers::providers::Provider::<ethers::providers::Ws>::connect(rpc_url).await;
-    
+
     // Note: This might fail if RPC is not available, so we'll just test that we can attempt connection
     // In a real test environment, you might want to use a mock or testnet
     if let Ok(provider) = provider {
@@ -42,11 +42,17 @@ async fn test_rpc_connection() {
 fn test_swap_event_creation_and_validation() {
     let event = SwapEvent {
         tx_hash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef".to_string(),
+        pool_address: "0xPoolAddressHere".to_string(),
         token_in: "0xA0b86a33E6441b8c4C8C8C8C8C8C8C8C8C8C8C8C8".to_string(),
         token_out: "0xB0b86a33E6441b8c4C8C8C8C8C8C8C8C8C8C8C8C8".to_string(),
-        amount_in: 1000.0,
-        amount_out: 950.0,
+        amount_in: 1000,
+        amount_out: 950,
+        amount_in_usd: Some(1.23),
+        amount_out_usd: Some(1.19),
         timestamp: 1640995200,
+        block_number: 12345678,
+        log_index: 0,
+        chain_id: 8453,
     };
 
     // Test basic validation
@@ -93,7 +99,10 @@ async fn test_pool_data_structure() {
         "moonshot".to_string(),
     );
 
-    assert_eq!(pool.pool_address, "0x1234567890123456789012345678901234567890");
+    assert_eq!(
+        pool.pool_address,
+        "0x1234567890123456789012345678901234567890"
+    );
     assert_eq!(pool.token0_address, "0xTokenA");
     assert_eq!(pool.token1_address, "0xTokenB");
     assert_eq!(pool.chain_id, 8453);
@@ -151,7 +160,7 @@ async fn test_pool_data_serialization() {
     // Test JSON serialization
     let json = serde_json::to_string(&pool).unwrap();
     let deserialized: PoolData = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(pool.pool_address, deserialized.pool_address);
     assert_eq!(pool.token0_address, deserialized.token0_address);
     assert_eq!(pool.token1_address, deserialized.token1_address);
@@ -180,7 +189,7 @@ async fn test_swap_event_serialization() {
     // Test JSON serialization
     let json = serde_json::to_string(&swap).unwrap();
     let deserialized: SwapEvent = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(swap.tx_hash, deserialized.tx_hash);
     assert_eq!(swap.pool_address, deserialized.pool_address);
     assert_eq!(swap.token_in, deserialized.token_in);
@@ -193,8 +202,8 @@ async fn test_swap_event_serialization() {
 #[tokio::test]
 async fn test_abi_parsing() {
     // Test that ABIs can be parsed correctly
-    use moonshot_indexer::moonshot::abi::{get_factory_abi, get_pool_abi, get_erc20_abi};
-    
+    use moonshot_indexer::moonshot::abi::{get_erc20_abi, get_factory_abi, get_pool_abi};
+
     let factory_abi = get_factory_abi();
     let pool_abi = get_pool_abi();
     let erc20_abi = get_erc20_abi();
@@ -210,39 +219,50 @@ async fn test_abi_parsing() {
 async fn test_extensibility_pattern() {
     // Test that the architecture supports adding new DEXs
     // This demonstrates the extensible design
-    
+
     // Simulate adding a new DEX handler
     struct MockDexHandler {
         dex_name: String,
         chain_id: i64,
     }
-    
+
     impl MockDexHandler {
         fn new(dex_name: String, chain_id: i64) -> Self {
             Self { dex_name, chain_id }
         }
-        
-        fn create_pool_data(&self, pool_address: String, token0: String, token1: String) -> PoolData {
-            PoolData::new(pool_address, token0, token1, self.chain_id, self.dex_name.clone())
+
+        fn create_pool_data(
+            &self,
+            pool_address: String,
+            token0: String,
+            token1: String,
+        ) -> PoolData {
+            PoolData::new(
+                pool_address,
+                token0,
+                token1,
+                self.chain_id,
+                self.dex_name.clone(),
+            )
         }
     }
-    
+
     // Test with different DEXs
     let moonshot_handler = MockDexHandler::new("moonshot".to_string(), 8453);
     let uniswap_handler = MockDexHandler::new("uniswap".to_string(), 1);
-    
+
     let moonshot_pool = moonshot_handler.create_pool_data(
         "0xPool1".to_string(),
         "0xTokenA".to_string(),
         "0xTokenB".to_string(),
     );
-    
+
     let uniswap_pool = uniswap_handler.create_pool_data(
         "0xPool2".to_string(),
         "0xTokenC".to_string(),
         "0xTokenD".to_string(),
     );
-    
+
     assert_eq!(moonshot_pool.dex_name, "moonshot");
     assert_eq!(moonshot_pool.chain_id, 8453);
     assert_eq!(uniswap_pool.dex_name, "uniswap");
@@ -252,7 +272,7 @@ async fn test_extensibility_pattern() {
 #[tokio::test]
 async fn test_data_validation() {
     // Test data validation logic
-    
+
     // Valid pool data
     let valid_pool = PoolData::new(
         "0x1234567890123456789012345678901234567890".to_string(),
@@ -261,13 +281,13 @@ async fn test_data_validation() {
         8453,
         "moonshot".to_string(),
     );
-    
+
     assert!(valid_pool.pool_address.starts_with("0x"));
     assert!(valid_pool.token0_address.starts_with("0x"));
     assert!(valid_pool.token1_address.starts_with("0x"));
     assert!(valid_pool.chain_id > 0);
     assert!(!valid_pool.dex_name.is_empty());
-    
+
     // Valid swap event
     let valid_swap = SwapEvent::new(
         "0x1234567890abcdef".to_string(),
@@ -281,7 +301,7 @@ async fn test_data_validation() {
         0,
         8453,
     );
-    
+
     assert!(valid_swap.tx_hash.starts_with("0x"));
     assert!(valid_swap.pool_address.starts_with("0x"));
     assert!(valid_swap.amount_in > 0);
@@ -296,7 +316,7 @@ async fn test_data_validation() {
 async fn test_database_operations_mock() {
     // This would test database operations in a real scenario
     // For now, we'll test the data structures that would be stored
-    
+
     let pools = vec![
         PoolData::new(
             "0xPool1".to_string(),
@@ -313,7 +333,7 @@ async fn test_database_operations_mock() {
             "moonshot".to_string(),
         ),
     ];
-    
+
     let swaps = vec![
         SwapEvent::new(
             "0xTx1".to_string(),
@@ -340,19 +360,19 @@ async fn test_database_operations_mock() {
             8453,
         ),
     ];
-    
+
     // Test that we can process multiple pools and swaps
     assert_eq!(pools.len(), 2);
     assert_eq!(swaps.len(), 2);
-    
+
     // Test that all pools are for the same chain and DEX
     for pool in &pools {
         assert_eq!(pool.chain_id, 8453);
         assert_eq!(pool.dex_name, "moonshot");
     }
-    
+
     // Test that all swaps are for the same chain
     for swap in &swaps {
         assert_eq!(swap.chain_id, 8453);
     }
-} 
+}

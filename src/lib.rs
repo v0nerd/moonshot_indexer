@@ -1,8 +1,9 @@
 pub mod config;
+pub mod moonshot;
 pub mod types;
 
 pub use config::Config;
-pub use types::{PoolData, SwapEvent, TokenData, IndexingStats};
+pub use types::{IndexingStats, PoolData, SwapEvent, TokenData};
 
 #[cfg(test)]
 mod tests {
@@ -18,7 +19,10 @@ mod tests {
             "moonshot".to_string(),
         );
 
-        assert_eq!(pool.pool_address, "0x1234567890123456789012345678901234567890");
+        assert_eq!(
+            pool.pool_address,
+            "0x1234567890123456789012345678901234567890"
+        );
         assert_eq!(pool.token0_address, "0xTokenA");
         assert_eq!(pool.token1_address, "0xTokenB");
         assert_eq!(pool.chain_id, 8453);
@@ -70,7 +74,7 @@ mod tests {
 
         let json = serde_json::to_string(&pool).unwrap();
         let deserialized: PoolData = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(pool.pool_address, deserialized.pool_address);
         assert_eq!(pool.token0_address, deserialized.token0_address);
         assert_eq!(pool.token1_address, deserialized.token1_address);

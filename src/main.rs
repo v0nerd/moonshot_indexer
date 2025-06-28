@@ -1,8 +1,4 @@
-use dotenv::dotenv;
-use anyhow::Result;
-use std::env;
 
-use moonshot_indexer::config::Config;
 use moonshot_indexer::types::{PoolData, SwapEvent};
 
 fn main() {
