@@ -210,6 +210,30 @@ impl Database {
 
         Ok(pools)
     }
+
+    pub async fn get_all_pool_addresses(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query("SELECT pool_address FROM pools")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let addresses = rows.into_iter()
+            .map(|row| row.get("pool_address"))
+            .collect();
+
+        Ok(addresses)
+    }
+
+    pub async fn get_stats(&self) -> Result<(u64, u64)> {
+        let pool_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pools")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let swap_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM swaps")
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok((pool_count as u64, swap_count as u64))
+    }
 }
 
 #[cfg(test)]

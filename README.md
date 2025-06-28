@@ -1,95 +1,110 @@
-# Moonshot Indexer
+# Moonshot Indexer for Abstract Chain
 
-A high-performance blockchain indexer for Moonshot DEX pools on Abstract chain, built in Rust.
+A production-grade blockchain indexer built in Rust that ingests Ethereum node data via WebSocket, maps DeFi protocol events from Moonshot pools on the Abstract chain, and stores data in PostgreSQL.
 
 ## Features
 
-- **Real-time Pool Indexing**: Indexes Moonshot pool creation events
-- **Swap Event Tracking**: Captures and stores all swap transactions
-- **Unified Data Structure**: DEX-agnostic data format for easy querying
-- **High Performance**: Sub-second indexing with PostgreSQL backend
-- **Extensible Architecture**: Easy to add new DEXs and chains
-- **Production Ready**: Error handling, logging, and monitoring
+- **Real-time Event Processing**: Listens for `PoolCreated` and `Swap` events from Moonshot factory and pools
+- **Multi-chain Support**: Designed for Abstract chain (Chain ID: 8453) with extensible architecture
+- **PostgreSQL Storage**: Efficient storage with proper indexing for fast queries
+- **Production Ready**: Error handling, logging, graceful shutdown, and monitoring
+- **DEX Agnostic**: Modular design allows easy extension to other DEX protocols
 
 ## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Abstract      │    │   Indexer       │    │   PostgreSQL    │
-│   Chain (RPC)   │───▶│   (Rust)        │───▶│   Database      │
+│   Abstract      │    │   Moonshot      │    │   PostgreSQL    │
+│   Chain RPC     │───▶│   Indexer       │───▶│   Database      │
+│   (WebSocket)   │    │   (Rust)        │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌─────────────────┐
-                       │   Event Handler │
-                       │   (Moonshot)    │
-                       └─────────────────┘
 ```
+
+### Components
+
+- **Config Module**: Environment-based configuration management
+- **Database Module**: PostgreSQL schema and operations
+- **Indexer Module**: Main event processing loop
+- **Moonshot Handler**: Protocol-specific event parsing
+- **Types Module**: Data structures for pools and swaps
 
 ## Quick Start
 
 ### Prerequisites
 
-- Rust 1.70+
-- PostgreSQL 12+
-- Abstract chain RPC endpoint
+1. **Rust Toolchain**: Install Rust 1.70+ with Cargo
+2. **PostgreSQL**: Install and configure PostgreSQL database
+3. **Visual Studio Build Tools** (Windows): Required for native dependencies
+4. **Abstract Chain RPC**: WebSocket endpoint for the Abstract chain
 
-### 1. Setup Environment
+### Installation
 
-Create a `.env` file in the project root:
+1. **Clone the repository**:
+   ```bash
+   git clone <repository-url>
+   cd Moonshot_indexer
+   ```
 
-```bash
-# Abstract Chain Configuration
-RPC_URL=wss://rpc.abstract.money
-DATABASE_URL=postgresql://postgres:password@localhost:5432/moonshot_indexer
-LOG_LEVEL=info
-CHAIN_ID=8453
-MOONSHOT_FACTORY_ADDRESS=0x0000000000000000000000000000000000000000
-BATCH_SIZE=100
-POLL_INTERVAL_MS=1000
-```
+2. **Install dependencies**:
+   ```bash
+   cargo build
+   ```
 
-### 2. Setup Database
+3. **Configure environment**:
+   ```bash
+   cp test.env.example .env
+   # Edit .env with your actual values
+   ```
 
-```bash
-# Create database
-createdb moonshot_indexer
+4. **Set up database**:
+   ```bash
+   # Create PostgreSQL database
+   createdb moonshot_indexer
+   ```
 
-# Or using Docker
-docker run --name postgres-moonshot \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=moonshot_indexer \
-  -p 5432:5432 \
-  -d postgres:13
-```
-
-### 3. Build and Run
-
-```bash
-# Build the project
-cargo build --release
-
-# Run the indexer
-cargo run --release
-```
+5. **Run the indexer**:
+   ```bash
+   cargo run
+   ```
 
 ## Configuration
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `RPC_URL` | Abstract chain WebSocket RPC URL | Required |
-| `DATABASE_URL` | PostgreSQL connection string | Required |
-| `CHAIN_ID` | Chain ID for Abstract | 8453 |
-| `MOONSHOT_FACTORY_ADDRESS` | Moonshot factory contract address | Required |
-| `BATCH_SIZE` | Number of blocks to process per batch | 100 |
-| `POLL_INTERVAL_MS` | Polling interval in milliseconds | 1000 |
-| `LOG_LEVEL` | Logging level (debug, info, warn, error) | info |
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `RPC_URL` | Abstract chain WebSocket RPC URL | - | Yes |
+| `DATABASE_URL` | PostgreSQL connection string | - | Yes |
+| `CHAIN_ID` | Chain ID (Abstract = 8453) | 8453 | No |
+| `MOONSHOT_FACTORY_ADDRESS` | Moonshot factory contract address | - | Yes |
+| `BATCH_SIZE` | Number of blocks to process per batch | 100 | No |
+| `POLL_INTERVAL_MS` | Polling interval in milliseconds | 1000 | No |
+| `LOG_LEVEL` | Logging level (debug, info, warn, error) | info | No |
 
-## Data Schema
+### Example Configuration
+
+```env
+# Abstract Chain RPC URL
+RPC_URL=wss://abstract-chain-rpc.example.com
+
+# PostgreSQL Database
+DATABASE_URL=postgresql://username:password@localhost:5432/moonshot_indexer
+
+# Abstract Chain Configuration
+CHAIN_ID=8453
+MOONSHOT_FACTORY_ADDRESS=00xB784bBd5CCe24b510d06377f6b0af3D33B73585a
+
+# Indexer Settings
+BATCH_SIZE=100
+POLL_INTERVAL_MS=1000
+LOG_LEVEL=info
+```
+
+## Database Schema
 
 ### Pools Table
+
+Stores Moonshot pool information:
 
 ```sql
 CREATE TABLE pools (
@@ -115,6 +130,8 @@ CREATE TABLE pools (
 
 ### Swaps Table
 
+Stores swap event data:
+
 ```sql
 CREATE TABLE swaps (
     id SERIAL PRIMARY KEY,
@@ -135,83 +152,54 @@ CREATE TABLE swaps (
 );
 ```
 
-## API Usage
+## Event Processing
 
-### Query Pools
+### Pool Creation Events
 
-```sql
--- Get all pools for a token pair
-SELECT * FROM pools 
-WHERE (token0_address = '0x...' AND token1_address = '0x...') 
-   OR (token0_address = '0x...' AND token1_address = '0x...');
+The indexer listens for `PoolCreated` events from the Moonshot factory:
 
--- Get pools with highest liquidity
-SELECT * FROM pools 
-WHERE liquidity > 0 
-ORDER BY liquidity DESC 
-LIMIT 10;
+```solidity
+event PoolCreated(
+    address indexed token0,
+    address indexed token1,
+    uint24 indexed fee,
+    int24 tickSpacing,
+    address pool
+);
 ```
 
-### Query Swaps
+### Swap Events
 
-```sql
--- Get recent swaps for a pool
-SELECT * FROM swaps 
-WHERE pool_address = '0x...' 
-ORDER BY timestamp DESC 
-LIMIT 100;
+The indexer processes `Swap` events from all known pools:
 
--- Get swap volume by token
-SELECT token_in, SUM(amount_in) as total_volume 
-FROM swaps 
-WHERE timestamp > extract(epoch from now() - interval '24 hours')
-GROUP BY token_in 
-ORDER BY total_volume DESC;
+```solidity
+event Swap(
+    address indexed sender,
+    address indexed recipient,
+    int256 amount0,
+    int256 amount1,
+    uint160 sqrtPriceX96,
+    uint128 liquidity,
+    int24 tick
+);
 ```
-
-## Extending for New DEXs
-
-The indexer is designed to be easily extensible. To add a new DEX:
-
-1. **Create DEX Module**: Add a new module in `src/dex_name/`
-2. **Define ABIs**: Create contract ABIs for the new DEX
-3. **Implement Handler**: Create event parsing logic
-4. **Update Indexer**: Add the new DEX to the main indexer
-
-Example structure for a new DEX:
-
-```rust
-// src/uniswap/mod.rs
-pub mod abi;
-pub mod handler;
-
-// src/uniswap/abi.rs
-pub const UNISWAP_FACTORY_ABI: &str = "...";
-
-// src/uniswap/handler.rs
-pub struct UniswapHandler {
-    // Implementation
-}
-```
-
-## Performance Optimization
-
-- **Batch Processing**: Process multiple blocks in batches
-- **Database Indexes**: Optimized indexes for fast queries
-- **Connection Pooling**: Efficient database connection management
-- **Error Recovery**: Automatic retry on failures
-- **Memory Management**: Efficient memory usage for large datasets
-
-## Monitoring
-
-The indexer provides basic monitoring through:
-
-- Console logging with configurable levels
-- Database statistics tracking
-- Error reporting and recovery
-- Block processing metrics
 
 ## Development
+
+### Project Structure
+
+```
+src/
+├── main.rs          # Application entry point
+├── config.rs        # Configuration management
+├── db.rs           # Database operations
+├── indexer.rs      # Main indexing logic
+├── types.rs        # Data structures
+└── moonshot/
+    ├── mod.rs      # Moonshot module
+    ├── handler.rs  # Event handlers
+    └── abi.rs      # Contract ABIs
+```
 
 ### Running Tests
 
@@ -220,79 +208,85 @@ The indexer provides basic monitoring through:
 cargo test
 
 # Run specific test
-cargo test test_pool_creation
+cargo test test_config_loading
 ```
 
-### Code Structure
+### Building for Production
 
-```
-src/
-├── main.rs          # Application entry point
-├── lib.rs           # Library exports
-├── config.rs        # Configuration management
-├── db.rs           # Database operations
-├── indexer.rs      # Main indexing logic
-├── types.rs        # Data structures
-└── moonshot/       # Moonshot-specific logic
-    ├── mod.rs
-    ├── abi.rs      # Contract ABIs
-    └── handler.rs  # Event handlers
+```bash
+# Release build
+cargo build --release
+
+# Run release binary
+./target/release/moonshot_indexer
 ```
 
-## Deployment
+## Monitoring and Logging
 
-### Docker
+The indexer provides comprehensive logging with different levels:
 
-```dockerfile
-FROM rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+- **INFO**: General operation status, pool creation, statistics
+- **DEBUG**: Detailed event processing information
+- **WARN**: Non-critical issues (e.g., failed pool state updates)
+- **ERROR**: Critical errors requiring attention
 
-FROM debian:bullseye-slim
-RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=builder /app/target/release/moonshot_indexer /usr/local/bin/
-CMD ["moonshot_indexer"]
+### Example Log Output
+
+```
+2024-01-15T10:30:00.000Z INFO  🚀 Starting Moonshot Indexer on Abstract Chain
+2024-01-15T10:30:00.001Z INFO  Configuration loaded successfully
+2024-01-15T10:30:00.002Z INFO  Connected to RPC: wss://abstract-chain-rpc.example.com
+2024-01-15T10:30:00.003Z INFO  Connected to database
+2024-01-15T10:30:00.004Z INFO  Database schema initialized
+2024-01-15T10:30:00.005Z INFO  Starting from block: 12345678
+2024-01-15T10:30:01.000Z INFO  New pool created: 0x1234... (tokens: USDC <-> WETH)
+2024-01-15T10:30:02.000Z DEBUG Swap event: token0 -> token1 (amount: 1000000)
 ```
 
-### Systemd Service
+## Troubleshooting
 
-```ini
-[Unit]
-Description=Moonshot Indexer
-After=network.target
+### Common Issues
 
-[Service]
-Type=simple
-User=indexer
-WorkingDirectory=/opt/moonshot-indexer
-ExecStart=/opt/moonshot-indexer/moonshot_indexer
-Restart=always
-Environment=RUST_LOG=info
+1. **Build Errors on Windows**:
+   - Install Visual Studio Build Tools
+   - Ensure C++ build tools are included
 
-[Install]
-WantedBy=multi-user.target
-```
+2. **Database Connection Issues**:
+   - Verify PostgreSQL is running
+   - Check connection string format
+   - Ensure database exists
+
+3. **RPC Connection Issues**:
+   - Verify WebSocket URL format
+   - Check network connectivity
+   - Ensure RPC endpoint supports WebSocket
+
+4. **Event Processing Errors**:
+   - Verify factory address is correct
+   - Check contract ABI compatibility
+   - Review chain ID configuration
+
+### Performance Tuning
+
+- **Batch Size**: Increase for higher throughput, decrease for lower latency
+- **Poll Interval**: Adjust based on network conditions and event frequency
+- **Database Indexes**: Optimize queries based on your access patterns
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests
+4. Add tests for new functionality
 5. Submit a pull request
 
 ## License
 
-MIT License - see LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Support
 
-For questions or issues:
-- Create an issue on GitHub
-- Check the documentation
-- Review the test examples
-
----
-
-**Note**: This is a demonstrative example for the first milestone. The actual Moonshot factory address and RPC endpoints need to be configured for the Abstract chain.
+For questions and support:
+- Create an issue in the repository
+- Check the troubleshooting section
+- Review the configuration examples

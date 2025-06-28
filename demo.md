@@ -280,4 +280,220 @@ This first milestone demonstrates:
 ✅ **Extensibility**: Easy to add new DEXs and chains
 ✅ **Performance**: Batch processing and database optimization
 
-The codebase is ready for the next phase of development and can be easily extended to support additional DEXs, chains, and features as required. 
+The codebase is ready for the next phase of development and can be easily extended to support additional DEXs, chains, and features as required.
+
+# Moonshot Indexer Demo
+
+This guide demonstrates how to run the Moonshot Indexer for the Abstract chain and shows the expected output.
+
+## Prerequisites
+
+Before running the demo, ensure you have:
+
+1. **Rust installed** (version 1.70+)
+2. **PostgreSQL running** with a database created
+3. **Abstract chain RPC endpoint** (WebSocket)
+4. **Moonshot factory address** for the Abstract chain
+
+## Setup
+
+### 1. Environment Configuration
+
+Create a `.env` file based on the example:
+
+```bash
+cp test.env.example .env
+```
+
+Edit the `.env` file with your actual values:
+
+```env
+# Abstract Chain RPC URL (replace with actual endpoint)
+RPC_URL=wss://your-abstract-chain-rpc.com
+
+# PostgreSQL Database (replace with your database)
+DATABASE_URL=postgresql://username:password@localhost:5432/moonshot_indexer
+
+# Abstract Chain Configuration
+CHAIN_ID=8453
+MOONSHOT_FACTORY_ADDRESS=0x1234567890123456789012345678901234567890
+
+# Indexer Settings
+BATCH_SIZE=100
+POLL_INTERVAL_MS=1000
+LOG_LEVEL=info
+```
+
+### 2. Database Setup
+
+Create the PostgreSQL database:
+
+```bash
+# Create database
+createdb moonshot_indexer
+
+# Or using psql
+psql -U postgres -c "CREATE DATABASE moonshot_indexer;"
+```
+
+## Running the Demo
+
+### 1. Build the Project
+
+```bash
+cargo build
+```
+
+### 2. Run the Indexer
+
+```bash
+cargo run
+```
+
+## Expected Output
+
+When you run the indexer, you should see output similar to this:
+
+```
+2024-01-15T10:30:00.000Z INFO  🚀 Starting Moonshot Indexer on Abstract Chain
+2024-01-15T10:30:00.001Z INFO  ==============================================
+2024-01-15T10:30:00.002Z INFO  Configuration loaded successfully
+2024-01-15T10:30:00.003Z INFO  Chain ID: 8453
+2024-01-15T10:30:00.004Z INFO  RPC URL: wss://your-abstract-chain-rpc.com
+2024-01-15T10:30:00.005Z INFO  Factory Address: 0x1234567890123456789012345678901234567890
+2024-01-15T10:30:00.006Z INFO  Indexer initialized successfully
+2024-01-15T10:30:00.007Z INFO  Connected to RPC: wss://your-abstract-chain-rpc.com
+2024-01-15T10:30:00.008Z INFO  Connected to database
+2024-01-15T10:30:00.009Z INFO  Database schema initialized
+2024-01-15T10:30:00.010Z INFO  Starting from block: 12345678
+2024-01-15T10:30:00.011Z INFO  Starting event processing...
+2024-01-15T10:30:00.012Z INFO  Press Ctrl+C to stop the indexer
+```
+
+### When Events Are Found
+
+When the indexer processes events, you'll see additional output:
+
+```
+2024-01-15T10:30:01.000Z INFO  New pool created: 0x1234567890123456789012345678901234567890 (tokens: USDC <-> WETH)
+2024-01-15T10:30:02.000Z DEBUG Swap event: token0 -> token1 (amount: 1000000)
+2024-01-15T10:30:03.000Z INFO  Processed 1 pools and 5 swaps in blocks 12345679 to 12345778
+2024-01-15T10:30:04.000Z INFO  Stats - Pools: 1, Swaps: 5, Last Block: 12345778
+```
+
+## Database Verification
+
+After running the indexer, you can verify the data in PostgreSQL:
+
+### Check Pools Table
+
+```sql
+-- Connect to your database
+psql -d moonshot_indexer
+
+-- View all pools
+SELECT pool_address, token0_symbol, token1_symbol, fee_tier, liquidity 
+FROM pools 
+ORDER BY created_at DESC 
+LIMIT 10;
+
+-- Example output:
+-- pool_address                           | token0_symbol | token1_symbol | fee_tier | liquidity
+-- 0x1234567890123456789012345678901234567890 | USDC          | WETH           | 3000     | 1000000
+```
+
+### Check Swaps Table
+
+```sql
+-- View recent swaps
+SELECT tx_hash, pool_address, token_in, token_out, amount_in, amount_out, timestamp
+FROM swaps 
+ORDER BY timestamp DESC 
+LIMIT 10;
+
+-- Example output:
+-- tx_hash                                | pool_address                           | token_in | token_out | amount_in | amount_out | timestamp
+-- 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef | 0x1234... | token0   | token1    | 1000000   | 950000     | 1640995200
+```
+
+## Monitoring
+
+### Real-time Statistics
+
+The indexer provides real-time statistics. You can monitor:
+
+- **Blocks processed**: Shows the last processed block number
+- **Pools indexed**: Total number of pools discovered
+- **Swaps processed**: Total number of swap events indexed
+- **Processing rate**: Events per second/minute
+
+### Log Levels
+
+Adjust the log level in your `.env` file:
+
+- `LOG_LEVEL=debug`: Detailed information about every event
+- `LOG_LEVEL=info`: General operation status (default)
+- `LOG_LEVEL=warn`: Only warnings and errors
+- `LOG_LEVEL=error`: Only errors
+
+## Stopping the Indexer
+
+To stop the indexer gracefully:
+
+1. Press `Ctrl+C` in the terminal
+2. The indexer will log the shutdown process:
+
+```
+2024-01-15T10:35:00.000Z INFO  Shutdown signal received
+2024-01-15T10:35:00.001Z INFO  Shutting down gracefully...
+2024-01-15T10:35:00.002Z INFO  Indexer shutdown complete
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection refused to RPC**:
+   - Verify the RPC URL is correct
+   - Ensure the endpoint supports WebSocket connections
+   - Check network connectivity
+
+2. **Database connection failed**:
+   - Verify PostgreSQL is running
+   - Check the connection string format
+   - Ensure the database exists
+
+3. **No events found**:
+   - Verify the factory address is correct
+   - Check if there are recent pool creation events
+   - Ensure the chain ID matches the Abstract chain
+
+4. **Build errors**:
+   - On Windows: Install Visual Studio Build Tools
+   - Ensure all dependencies are installed
+   - Check Rust version compatibility
+
+### Performance Tips
+
+- **Increase batch size** for higher throughput: `BATCH_SIZE=500`
+- **Decrease poll interval** for lower latency: `POLL_INTERVAL_MS=500`
+- **Use debug logging** for detailed event information: `LOG_LEVEL=debug`
+
+## Next Steps
+
+After successfully running the demo:
+
+1. **Configure production settings** with your actual Abstract chain endpoints
+2. **Set up monitoring** and alerting for the indexer
+3. **Optimize database queries** based on your access patterns
+4. **Scale the indexer** for higher throughput if needed
+5. **Add additional DEX support** by extending the architecture
+
+## Support
+
+If you encounter issues:
+
+1. Check the troubleshooting section
+2. Review the configuration examples
+3. Create an issue in the repository with detailed error information
+4. Ensure all prerequisites are properly installed and configured 

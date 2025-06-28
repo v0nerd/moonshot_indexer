@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ethers::abi::Abi;
+use ethers::abi::{Abi, Token};
 use ethers::contract::Contract;
 use ethers::providers::Provider;
 use ethers::types::{Address, Log, U256};
@@ -27,19 +27,18 @@ impl MoonshotHandler {
 
     pub async fn handle_pool_created(&self, log: Log, chain_id: i64) -> Result<PoolData> {
         let event = self.factory_abi.event("PoolCreated")?;
-        let raw_log = log.clone().into();
-        let decoded = event.parse_log(raw_log)?;
+        let decoded = event.parse_log(log.clone().into())?;
 
-        let token0: Address = decoded.params[0].value.clone().into().into_address()?;
-        let token1: Address = decoded.params[1].value.clone().into().into_address()?;
-        let fee: u32 = decoded.params[2].value.clone().into().into_uint()?.as_u32();
-        let tick_spacing: i32 = decoded.params[3].value.clone().into().into_int()?.as_i32();
-        let pool_address: Address = decoded.params[4].value.clone().into().into_address()?;
+        let token0: Address = decoded.params[0].value.clone().into_address().unwrap();
+        let token1: Address = decoded.params[1].value.clone().into_address().unwrap();
+        let fee: u32 = decoded.params[2].value.clone().into_uint().unwrap().as_u32();
+        let tick_spacing: i32 = decoded.params[3].value.clone().into_int().unwrap().as_u32() as i32;
+        let pool_address: Address = decoded.params[4].value.clone().into_address().unwrap();
 
         let (token0_symbol, token0_decimals) = self.get_token_metadata(token0).await?;
         let (token1_symbol, token1_decimals) = self.get_token_metadata(token1).await?;
 
-        Ok(PoolData {
+        let pool_data = PoolData {
             pool_address: format!("{:?}", pool_address),
             token0_address: format!("{:?}", token0),
             token1_address: format!("{:?}", token1),
@@ -54,54 +53,54 @@ impl MoonshotHandler {
             tick: None,
             chain_id,
             dex_name: "moonshot".to_string(),
-        })
+        };
+
+        Ok(pool_data)
     }
 
     pub async fn handle_swap(&self, log: Log, chain_id: i64) -> Result<SwapEvent> {
         let event = self.pool_abi.event("Swap")?;
-        let raw_log = log.clone().into();
-        let decoded = event.parse_log(raw_log)?;
+        let decoded = event.parse_log(log.clone().into())?;
 
-        let amount0: i128 = decoded.params[2].value.clone().into().into_int()?.as_i128();
-        let amount1: i128 = decoded.params[3].value.clone().into().into_int()?.as_i128();
-        let sqrt_price_x96: U256 = decoded.params[4].value.clone().into().into_uint()?;
-        let liquidity: u128 = decoded.params[5]
-            .value
-            .clone()
-            .into()
-            .into_uint()?
-            .as_u128();
-        let tick: i32 = decoded.params[6].value.clone().into().into_int()?.as_i32();
+        let sender: Address = decoded.params[0].value.clone().into_address().unwrap();
+        let recipient: Address = decoded.params[1].value.clone().into_address().unwrap();
+        let amount0: i128 = decoded.params[2].value.clone().into_int().unwrap().as_u128() as i128;
+        let amount1: i128 = decoded.params[3].value.clone().into_int().unwrap().as_u128() as i128;
+        let sqrt_price_x96: U256 = decoded.params[4].value.clone().into_uint().unwrap();
+        let liquidity: u128 = decoded.params[5].value.clone().into_uint().unwrap().as_u128();
+        let tick: i32 = decoded.params[6].value.clone().into_int().unwrap().as_u32() as i32;
 
         let (token_in, token_out, amount_in, amount_out) = if amount0 > 0 {
-            ("token0", "token1", amount0 as i64, -amount1 as i64)
+            ("token0", "token1", amount0 as i64, -(amount1 as i64))
         } else {
-            ("token1", "token0", amount1 as i64, -amount0 as i64)
+            ("token1", "token0", amount1 as i64, -(amount0 as i64))
         };
 
-        Ok(SwapEvent::new(
-            format!("{:?}", log.transaction_hash.unwrap_or_default()),
+        let swap_event = SwapEvent::new(
+            format!("{:?}", log.transaction_hash.unwrap()),
             format!("{:?}", log.address),
             token_in.to_string(),
             token_out.to_string(),
             amount_in,
             amount_out,
-            log.block_number.unwrap_or_default().as_u64() as i64,
-            log.block_number.unwrap_or_default().as_u64() as i64,
-            log.log_index.unwrap_or_default().as_u64() as i32,
+            log.block_number.unwrap().as_u64() as i64,
+            log.block_number.unwrap().as_u64() as i64,
+            log.log_index.unwrap().as_u64() as i32,
             chain_id,
-        ))
+        );
+
+        Ok(swap_event)
     }
 
     async fn get_token_metadata(&self, token_address: Address) -> Result<(Option<String>, u8)> {
         let contract = Contract::new(token_address, self.erc20_abi.clone(), self.provider.clone());
 
-        let symbol: String = match contract.method::<(), String>("symbol", ())?.call().await {
+        let symbol: String = match contract.method("symbol", ())?.call().await {
             Ok(s) => s,
             Err(_) => return Ok((None, 18)),
         };
 
-        let decimals: u8 = match contract.method::<(), u8>("decimals", ())?.call().await {
+        let decimals: u8 = match contract.method("decimals", ())?.call().await {
             Ok(d) => d,
             Err(_) => 18,
         };

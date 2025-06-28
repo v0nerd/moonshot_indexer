@@ -4,6 +4,7 @@ use ethers::types::{Address, Filter, Log};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{info, error, warn, debug};
 
 use crate::config::Config;
 use crate::db::Database;
@@ -16,21 +17,23 @@ pub struct Indexer {
     database: Database,
     handler: MoonshotHandler,
     last_processed_block: u64,
+    pools_processed: u64,
+    swaps_processed: u64,
 }
 
 impl Indexer {
     pub async fn new(config: Config) -> Result<Self> {
         // Connect to RPC
         let provider = Arc::new(Provider::<Ws>::connect(&config.rpc_url).await?);
-        println!("Connected to RPC: {}", config.rpc_url);
+        info!("Connected to RPC: {}", config.rpc_url);
 
         // Connect to database
         let database = Database::new(&config.database_url).await?;
-        println!("Connected to database");
+        info!("Connected to database");
 
         // Initialize database schema
         database.init_schema().await?;
-        println!("Database schema initialized");
+        info!("Database schema initialized");
 
         // Create handler
         let handler = MoonshotHandler::new(provider.clone());
@@ -39,27 +42,36 @@ impl Indexer {
         let current_block = provider.get_block_number().await?;
         let last_processed_block = current_block.as_u64().saturating_sub(100); // Start from 100 blocks ago
 
+        info!("Starting from block: {}", last_processed_block);
+
         Ok(Self {
             config,
             provider,
             database,
             handler,
             last_processed_block,
+            pools_processed: 0,
+            swaps_processed: 0,
         })
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        println!("Starting indexer...");
-        println!("Chain ID: {}", self.config.chain_id);
-        println!("Moonshot Factory: {}", self.config.moonshot_factory_address);
+        info!("Starting indexer...");
+        info!("Chain ID: {}", self.config.chain_id);
+        info!("Moonshot Factory: {}", self.config.moonshot_factory_address);
 
         loop {
             match self.process_blocks().await {
                 Ok(_) => {
+                    // Log stats periodically
+                    if self.pools_processed > 0 || self.swaps_processed > 0 {
+                        info!("Stats - Pools: {}, Swaps: {}, Last Block: {}", 
+                              self.pools_processed, self.swaps_processed, self.last_processed_block);
+                    }
                     sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
                 }
                 Err(e) => {
-                    eprintln!("Error processing blocks: {}", e);
+                    error!("Error processing blocks: {}", e);
                     sleep(Duration::from_millis(5000)).await; // Wait longer on error
                 }
             }
@@ -80,19 +92,26 @@ impl Indexer {
             from_block + self.config.batch_size as u64 - 1,
         );
 
-        println!("Processing blocks {} to {}", from_block, to_block);
+        debug!("Processing blocks {} to {}", from_block, to_block);
 
         // Process pool creation events
-        self.process_pool_events(from_block, to_block).await?;
+        let pools_found = self.process_pool_events(from_block, to_block).await?;
+        self.pools_processed += pools_found;
 
         // Process swap events
-        self.process_swap_events(from_block, to_block).await?;
+        let swaps_found = self.process_swap_events(from_block, to_block).await?;
+        self.swaps_processed += swaps_found;
+
+        if pools_found > 0 || swaps_found > 0 {
+            info!("Processed {} pools and {} swaps in blocks {} to {}", 
+                  pools_found, swaps_found, from_block, to_block);
+        }
 
         self.last_processed_block = to_block;
         Ok(())
     }
 
-    async fn process_pool_events(&self, from_block: u64, to_block: u64) -> Result<()> {
+    async fn process_pool_events(&self, from_block: u64, to_block: u64) -> Result<u64> {
         let factory_address: Address = self.config.moonshot_factory_address.parse()?;
 
         let filter = Filter::new()
@@ -102,68 +121,87 @@ impl Indexer {
             .event("PoolCreated(address,address,uint24,int24,address)");
 
         let logs = self.provider.get_logs(&filter).await?;
+        let mut pools_processed = 0;
 
         for log in logs {
             match self.handler.handle_pool_created(log, self.config.chain_id as i64).await {
                 Ok(pool_data) => {
-                    println!("New pool created: {}", pool_data.pool_address);
+                    info!("New pool created: {} (tokens: {} <-> {})", 
+                          pool_data.pool_address, pool_data.token0_symbol.as_deref().unwrap_or("Unknown"), 
+                          pool_data.token1_symbol.as_deref().unwrap_or("Unknown"));
+                    
                     if let Err(e) = self.database.upsert_pool(&pool_data).await {
-                        eprintln!("Error storing pool: {}", e);
+                        error!("Error storing pool: {}", e);
+                    } else {
+                        pools_processed += 1;
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error parsing pool creation event: {}", e);
+                    error!("Error parsing pool creation event: {}", e);
                 }
             }
         }
 
-        Ok(())
+        Ok(pools_processed)
     }
 
-    async fn process_swap_events(&self, from_block: u64, to_block: u64) -> Result<()> {
-        // Get all known pools from database
-        // For now, we'll process all swap events and filter by known pools
-        // In a production system, you'd want to maintain a list of known pool addresses
+    async fn process_swap_events(&self, from_block: u64, to_block: u64) -> Result<u64> {
+        // Get all known pools from database to filter swap events
+        let known_pools = self.database.get_all_pool_addresses().await?;
+        
+        if known_pools.is_empty() {
+            debug!("No known pools found, skipping swap processing");
+            return Ok(0);
+        }
 
-        let filter = Filter::new()
-            .from_block(from_block)
-            .to_block(to_block)
-            .event("Swap(address,address,int256,int256,uint160,uint128,int24)");
+        let mut swaps_processed = 0;
 
-        let logs = self.provider.get_logs(&filter).await?;
+        // Process swap events for each known pool
+        for pool_address in known_pools {
+            let pool_addr: Address = pool_address.parse()?;
+            
+            let filter = Filter::new()
+                .from_block(from_block)
+                .to_block(to_block)
+                .address(pool_addr)
+                .event("Swap(address,address,int256,int256,uint160,uint128,int24)");
 
-        for log in logs {
-            match self.handler.handle_swap(log, self.config.chain_id as i64).await {
-                Ok(swap_event) => {
-                    println!("Swap event: {} -> {} (amount: {})", 
-                        swap_event.token_in, swap_event.token_out, swap_event.amount_in);
-                    
-                    if let Err(e) = self.database.insert_swap(&swap_event).await {
-                        eprintln!("Error storing swap: {}", e);
-                    }
+            let logs = self.provider.get_logs(&filter).await?;
 
-                    // Update pool state after swap
-                    if let Ok(pool_address) = swap_event.pool_address.parse::<Address>() {
-                        if let Ok(pool_data) = self.handler.update_pool_state(pool_address, self.config.chain_id as i64).await {
-                            if let Err(e) = self.database.upsert_pool(&pool_data).await {
-                                eprintln!("Error updating pool state: {}", e);
+            for log in logs {
+                match self.handler.handle_swap(log, self.config.chain_id as i64).await {
+                    Ok(swap_event) => {
+                        debug!("Swap event: {} -> {} (amount: {})", 
+                            swap_event.token_in, swap_event.token_out, swap_event.amount_in);
+                        
+                        if let Err(e) = self.database.insert_swap(&swap_event).await {
+                            error!("Error storing swap: {}", e);
+                        } else {
+                            swaps_processed += 1;
+                        }
+
+                        // Update pool state after swap
+                        if let Ok(pool_address) = swap_event.pool_address.parse::<Address>() {
+                            if let Ok(pool_data) = self.handler.update_pool_state(pool_address, self.config.chain_id as i64).await {
+                                if let Err(e) = self.database.upsert_pool(&pool_data).await {
+                                    warn!("Error updating pool state: {}", e);
+                                }
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    eprintln!("Error parsing swap event: {}", e);
+                    Err(e) => {
+                        error!("Error parsing swap event: {}", e);
+                    }
                 }
             }
         }
 
-        Ok(())
+        Ok(swaps_processed)
     }
 
-    pub async fn get_stats(&self) -> Result<(u64, u64)> {
-        // Get total pools and swaps from database
-        // This is a simplified version - in production you'd want more detailed stats
-        Ok((self.last_processed_block, 0)) // TODO: Implement actual stats
+    pub async fn get_stats(&self) -> Result<(u64, u64, u64)> {
+        let (total_pools, total_swaps) = self.database.get_stats().await?;
+        Ok((self.last_processed_block, total_pools, total_swaps))
     }
 }
 
@@ -178,3 +216,4 @@ mod tests {
         assert!(true);
     }
 }
+

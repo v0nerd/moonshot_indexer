@@ -19,7 +19,7 @@ impl Config {
             database_url: env::var("DATABASE_URL")?,
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string()),
             chain_id: env::var("CHAIN_ID")
-                .unwrap_or_else(|_| "1".to_string())
+                .unwrap_or_else(|_| "8453".to_string()) // Default to Abstract chain
                 .parse()?,
             moonshot_factory_address: env::var("MOONSHOT_FACTORY_ADDRESS")
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
@@ -34,6 +34,10 @@ impl Config {
 
     pub fn is_testnet(&self) -> bool {
         self.chain_id != 1 // Mainnet
+    }
+
+    pub fn is_abstract_chain(&self) -> bool {
+        self.chain_id == 8453 // Abstract chain ID
     }
 }
 
@@ -58,6 +62,7 @@ mod tests {
         );
         assert_eq!(config.chain_id, 8453);
         assert_eq!(config.log_level, "info");
+        assert!(config.is_abstract_chain());
 
         // Clean up
         env::remove_var("RPC_URL");
