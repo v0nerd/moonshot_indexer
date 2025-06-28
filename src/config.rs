@@ -1,5 +1,5 @@
-use std::env;
 use anyhow::Result;
+use std::env;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -47,13 +47,21 @@ mod tests {
         // Set test environment variables
         env::set_var("RPC_URL", "wss://test.example.com");
         env::set_var("DATABASE_URL", "postgresql://test:test@localhost:5432/test");
-        env::set_var("CHAIN_ID", "8453"); // Base chain
-        
+        env::set_var("CHAIN_ID", "8453");
+
         let config = Config::from_env().unwrap();
-        
+
         assert_eq!(config.rpc_url, "wss://test.example.com");
-        assert_eq!(config.database_url, "postgresql://test:test@localhost:5432/test");
+        assert_eq!(
+            config.database_url,
+            "postgresql://test:test@localhost:5432/test"
+        );
         assert_eq!(config.chain_id, 8453);
-        assert_eq!(config.log_level, "info"); // default value
+        assert_eq!(config.log_level, "info");
+
+        // Clean up
+        env::remove_var("RPC_URL");
+        env::remove_var("DATABASE_URL");
+        env::remove_var("CHAIN_ID");
     }
 }
